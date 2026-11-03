@@ -1,0 +1,22 @@
+%YAML 1.2
+---
+# GitHub settings of shephrd-sh/ghostty, set by hand through the API. The
+# fork runs upstream code we do not maintain, so nothing here scans, builds
+# or tracks it; only secret scanning guards what we push.
+# Owner decision, 2026-11-04. Read back with:
+#   gh api repos/shephrd-sh/ghostty/code-scanning/default-setup --jq .state
+#   gh api repos/shephrd-sh/ghostty/actions/permissions --jq .enabled
+#   gh api repos/shephrd-sh/ghostty/vulnerability-alerts   # 404 when off
+#   gh api graphql -f query='{repository(owner:"shephrd-sh",name:"ghostty"){hasProjectsEnabled}}'
+#   gh api repos/shephrd-sh/ghostty --jq .security_and_analysis
+repository: shephrd-sh/ghostty
+off:
+  # CodeQL default setup, the only workflow GitHub had registered here.
+  code_scanning_default_setup: not-configured
+  # Actions entirely: no upstream workflow runs on our runners or minutes.
+  actions: disabled
+  dependabot_alerts: disabled
+  projects: disabled
+on:
+  secret_scanning: enabled
+  secret_scanning_push_protection: enabled

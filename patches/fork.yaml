@@ -1,0 +1,52 @@
+%YAML 1.2
+---
+schema: 1
+downstream:
+  remote: origin
+  branch: downstream
+  recovery_tag_prefix: forkctl/recovery
+  publish: append
+upstream:
+  remote: upstream
+  url: https://github.com/ghostty-org/ghostty.git
+  fetch_ref: refs/heads/main
+base:
+  target:
+    kind: tag
+    selector: refs/tags/v1.4.0
+    commit: 83fb95624b0439ee660c2679b43b38c8b63769cd
+    tag_object: ce787fc18a7782e81585beb63f0d905ccaf69284
+  canonical: 83fb95624b0439ee660c2679b43b38c8b63769cd
+  stack: 83fb95624b0439ee660c2679b43b38c8b63769cd
+documents:
+  ledger: PATCHES.md
+  exports: patches/downstream
+bookkeeping_patch: fork-tooling
+patches:
+  - name: history-page-random-access-test
+    kind: source
+    purpose: >-
+      Prove that the incremental snapshot decoder restores any history page given
+      alone after the READY prefix and the HISTORY manifest, with the same cells as the
+      full decode, so shephrd can open a deep page of a suspended pane without restoring
+      the newer ones.
+    upstream_status: not-submitted
+    drop_when: Upstream carries an equivalent test.
+    scope:
+      - src/terminal/snapshot/snapshot.zig
+  - name: fork-tooling
+    kind: tooling
+    purpose: Own fork policy, generated evidence, and integration configuration.
+    upstream_status: "inappropriate: downstream-only fork maintenance"
+    drop_when: The downstream fork is retired.
+    scope:
+      - patches/fork.yaml
+      - PATCHES.md
+      - patches/downstream/**
+      - mise.toml
+      - patches/github-settings.yaml
+disabled_patches: []
+history: []
+contracts:
+  allow_base: []
+  required_text: []
