@@ -1,0 +1,139 @@
+history-page-random-access-test
+
+From: Victor Araújo <victor@victor-software-house.com>
+
+Downstream-Reason: Prove that the incremental snapshot decoder restores any history page given alone after the READY prefix and the HISTORY manifest, with the same cells as the full decode, so shephrd can open a deep page of a suspended pane without restoring the newer ones.
+Upstream-Status: not-submitted
+Drop-When: Upstream carries an equivalent test.
+---
+ src/terminal/snapshot/snapshot.zig |  117 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 117 insertions(+)
+
+diff --git a/src/terminal/snapshot/snapshot.zig b/src/terminal/snapshot/snapshot.zig
+index 6246a087ecfdd0711f78f7aa48db192063634bf7..40a0d92413ddb50e58d11ae65633c2e4bd9e144a 100644
+--- a/src/terminal/snapshot/snapshot.zig
++++ b/src/terminal/snapshot/snapshot.zig
+@@ -2273,6 +2273,123 @@ test "incremental decode applies history below live PTY output" {
+     );
+ }
+ 
++test "incremental decode restores any history page without the newer ones" {
++    const testing = std.testing;
++
++    // Give every cell of every page its own codepoint, so a page restored
++    // in the wrong place or with another page's rows cannot match.
++    var t = try testHistoryTerminal(4);
++    defer t.deinit(testing.allocator);
++    {
++        var next_codepoint: u21 = 'a';
++        var node = t.screens.get(.primary).?.pages.pages.first;
++        while (node) |current| : (node = current.next) {
++            const terminal_page = current.page();
++            for (0..terminal_page.size.rows) |y| {
++                for (0..terminal_page.size.cols) |x| {
++                    terminal_page.getRowAndCell(x, y).cell.* = .init(next_codepoint);
++                    next_codepoint += 1;
++                }
++            }
++        }
++    }
++    var encoded: std.Io.Writer.Allocating = .init(testing.allocator);
++    defer encoded.deinit();
++    try encode(testing.allocator, &encoded.writer, &t, test_encode_options);
++    const bytes = encoded.written();
++
++    // The full decode is the reference for each page's content.
++    var full_source: std.Io.Reader = .fixed(bytes);
++    var full = try decode(
++        testing.allocator,
++        testing.io,
++        &full_source,
++        test_decode_options,
++    );
++    defer full.deinit(testing.allocator);
++    const full_primary = full.terminal.?.screens.get(.primary).?;
++
++    // Find the end of READY, then walk the record headers for the HISTORY
++    // manifest and the range of each PAGE that follows it, newest first.
++    // The decoder's own source position is no boundary: after each page it
++    // has already read the next record's header.
++    const prefix_len = prefix: {
++        var source: std.Io.Reader = .fixed(bytes);
++        var decoder: Decoder = .init(&source);
++        var decoded = try decoder.ready(
++            testing.allocator,
++            testing.io,
++            test_decode_options,
++        );
++        decoded.deinit(testing.allocator);
++        break :prefix source.seek;
++    };
++    var walk: std.Io.Reader = .fixed(bytes[prefix_len..]);
++    const manifest = try record.Header.decode(&walk);
++    try testing.expectEqual(record.Tag.history, manifest.tag);
++    try walk.discardAll(manifest.payload_len);
++    const manifest_end = prefix_len + walk.seek;
++
++    var pages: [4][2]usize = undefined;
++    for (&pages) |*range| {
++        const start = prefix_len + walk.seek;
++        const header = try record.Header.decode(&walk);
++        try testing.expectEqual(record.Tag.page, header.tag);
++        try walk.discardAll(header.payload_len);
++        range.* = .{ start, prefix_len + walk.seek };
++    }
++
++    // Each page, given alone after the prefix and the manifest, restores
++    // above the active page with the same cells as in the full decode,
++    // whichever pages are newer.
++    for (pages, 0..) |range, index| {
++        var scratch: std.Io.Writer.Allocating = .init(testing.allocator);
++        defer scratch.deinit();
++        try scratch.writer.writeAll(bytes[0..manifest_end]);
++        try scratch.writer.writeAll(bytes[range[0]..range[1]]);
++
++        var source: std.Io.Reader = .fixed(scratch.written());
++        var decoder: Decoder = .init(&source);
++        var decoded = try decoder.ready(
++            testing.allocator,
++            testing.io,
++            test_decode_options,
++        );
++        defer decoded.deinit(testing.allocator);
++        var restored = decoded.toOwned();
++        defer restored.deinit(testing.allocator);
++
++        // The manifest still declares every page, so the decoder counts
++        // the rest of them as remaining.
++        const progress = (try decoder.next(testing.allocator, &restored)).?;
++        try testing.expectEqualDeep(Decoder.Progress{ .page = .{
++            .key = .primary,
++            .rows = 2,
++            .remaining = pages.len - 1,
++        } }, progress);
++        const primary = restored.screens.get(.primary).?;
++        try testing.expectEqual(5, primary.pages.scrollbar().total);
++        primary.pages.assertIntegrity();
++        primary.assertIntegrity();
++
++        // Pages are encoded newest first, so page `index` is the one
++        // `index` nodes above the full decode's active page.
++        var reference = full_primary.pages.getTopLeft(.active).node;
++        for (0..index + 1) |_| reference = reference.prev.?;
++        const expected = reference.page();
++        const actual = primary.pages.pages.first.?.page();
++        try testing.expectEqual(expected.size, actual.size);
++        for (0..expected.size.rows) |y| {
++            for (0..expected.size.cols) |x| {
++                try testing.expectEqual(
++                    expected.getRowAndCell(x, y).cell.codepoint(),
++                    actual.getRowAndCell(x, y).cell.codepoint(),
++                );
++            }
++        }
++    }
++}
++
+ test "incremental decode discards history for screens changed since READY" {
+     const testing = std.testing;
+ 
